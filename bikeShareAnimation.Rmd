@@ -1,0 +1,150 @@
+---
+title: "Development of the Bike Share System Around the World"
+author: "Sylvie"
+output: html_document
+---
+
+<style type = 'text/css'>
+body{
+  background:#DAFFD9;
+}
+#imgleft img{
+  float:left;
+  margin-right: 2em;
+  margin-bottom: 2em;
+}
+img{
+  margin-left:auto;
+  margin-right:auto;
+  display:block;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+```{r, echo=FALSE}
+options(warn=-1)
+```
+<div id = 'imgleft'>
+![bike](bike.png)
+</div>
+Luud Schimmelpennink started the first community bike share system in Amsterdam, Netherlands, in 1965.  The bikes were free to use, and were quickly all stolen. Though a few other systems have been tried by various people in different worldwide locations over the years many often closed due to theft of the bicycles. The introduction of ‘smart technology’ to track the bikes allowed for the further development of these bike-share systems and helped mitigate the losses (monetary and equipment) from theft. The first modern bike share system was introduced in Portsmouth (England) in 1995 (http://en.wikipedia.org/wiki/Bicycle\_sharing_system).
+
+## Visualization of the Development of the Bike Sharing System
+### Getting the Data
+To visualize the growth of the bike sharing system, I scraped the [wikipedia table](http://en.wikipedia.org/wiki/List_of_bicycle_sharing_systems) containing the location and opening date of every bike share program in the world, with the exception of the Netherlands systems (the table does not contain this data; I presume because there have been so many in the Netherlands).  
+
+After downloading the data, I used the geocode function to obtain the coordinates of the cities for each system. I extracted the year when the system began (or is planned to), and whether the system is closed or still running. After cleaning the data, I created an index corresponding to the number of years between the first system and the last, which will be used to create the animation, and made this index correspond to each year. Finally, I saved the data to use for the animation.
+
+```{r, eval=FALSE}
+library(XML)
+library(ggmap)
+
+web <- 'http://en.wikipedia.org/wiki/List_of_bicycle_sharing_systems'
+tables <- readHTMLTable(web, stringsAsFactors = FALSE)
+tb <- tables[[1]]
+
+cities <- paste(tb$City, tb$Country, sep =',')
+cities <- cities[-c(346,347)]
+coord <- geocode(cities, output = 'latlon')
+head(coord)
+cities <- data.frame(cities, coord)
+tb <-    tb[-c(346:347),]
+cities <- data.frame(cities, status = tb$Status, year = tb$Year, station = tb$Stations, bike = tb$Bicycles)
+
+cities$year <- as.character(cities$year)
+get_year.f <- function(x){
+  y <- substring(x, nchar(x)-3, nchar(x))
+  return(y)
+}
+
+year <- sapply(cities$year, get_year.f)
+cities$year <- year
+
+cities$status <- as.character(cities$status)
+cities$closedyear <- ifelse(grepl('Closed', cities$status), substring(cities$status, (nchar(cities$status)-4), (nchar(cities$status) -1)), NA)
+cities$status[grep('Closed', cities$status)] = 'closed'
+
+#need some cleaning
+cities <- cities[-c(352,353),]
+cities$year[which(cities$year == '974)')] = 2010
+cities$year[which(cities$year == '237]')] = 2009
+cities$year[which(cities$year == 'lot)')] = 2011
+cities$year[which(cities$year == '006)')] = 2006
+cities$status[which(cities$status == '  ?' | cities$status == 'Inactive')] = 'closed'
+cities$status[which(cities$status == 'On Hold' | cities$status == 'Was due to open April 2013')] = 'Planned'
+
+##create an index for the animation
+rg <- max(cities$year, na.rm = TRUE) - min(cities$year, na.rm = TRUE) + 1
+dates <- data.frame(year = min(as.numeric(cities$year), na.rm = TRUE):max(as.numeric(cities$year), na.rm = TRUE), idx = 1:rg)
+
+cities <- left_join(cities, dates)
+save(dates, file = 'dates')
+cities$idx[is.na(cities$idx)] = max(cities$idx, na.rm = TRUE)
+save(cities, file = 'bikeshareCities')
+```
+
+### Animation
+
+The bike share system developed first in Europe and then spread around the world, which is why I wanted the first part of my animation to be centered in Europe. I used the maps package because ggmap seems to have a problem with showing a good map of the world; the zoom = 1 does not zoom enough while zoom = 2 zooms too much.
+
+I chose to use three colors to show the status of a given share system: yellow for running, red for closed and green for in development. I then used the previously created index to loop through the years. While looking at the data set, I noted that 2008 was the first year in which a new bike share system was created outside of Europe, so I chose to change the map from the Europe map to the World map at that moment. I saved the animation in html so that it would be easy to share. 
+
+```{r, eval=FALSE}
+library(dplyr)
+library(maps)
+library(ggplot2)
+library(animation)
+
+load('bikeshareCities')
+load('dates')
+mapWorld <- borders("world", colour="gray50", fill="gray50")
+latw <- c(-70, 90) 
+longw <- c(-160, 160) 
+mp <- NULL
+mp <- ggplot() + mapWorld 
+latlimits <- c(30, 65) 
+longlimits <- c(-20, 50) 
+ep <- NULL
+ep <- ggplot() + mapWorld
+
+oopt = ani.options(interval = 0.3)
+bike_animation = function(){
+  for (i in 1:max(cities$idx)){
+    init <- cities %>% filter(idx <= i)
+    year <- dates$year[which(dates$idx == i)]
+    if(year <= 2007){
+      print(ep + coord_cartesian(xlim = longlimits, ylim = latlimits) + geom_point(data = init, aes(x = lon, y = lat, size = bike, colour = status))+ geom_text(aes(x = 42, y = 32), label = year, colour = 'yellow', size = 10)+
+        scale_colour_manual(values = c("yellow","red", "green"))+
+      theme(
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        panel.background = element_rect('#00FFFF'),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "none"
+      ))
+    }else{
+      print(mp + coord_cartesian(xlim = longw, ylim = latw) + geom_point(data = init, aes(x = lon, y = lat, size = as.numeric(bike), colour = status))+ 
+              geom_text(aes(x = 130, y = -55), label = year, size = 10)+
+              scale_colour_manual(values = c("yellow","red", "green"))+scale_size(range = c(0, 3))+
+              theme(
+                axis.text = element_blank(),
+                axis.ticks = element_blank(),
+                axis.title = element_blank(),
+                panel.background = element_rect('#00FFFF'),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.position = "none"
+              )
+        )
+    }
+    animation::ani.pause()
+  }
+}
+saveHTML(bike_animation(), autoplay = FALSE, loop = FALSE, verbose = TRUE, outdir = "images", htmlfile ='share.html', ani.height = 500, ani.width = 800,  single.opts = "'controls': ['first', 'previous', 'play', 'next', 'last', 'loop', 'speed'], 'delayMin': 0")
+```
+
+<iframe src = 'https://dl.dropboxusercontent.com/u/18128908/bikeShareAnimation/index.html' width = 900 height = 570 style = "border = none;"" seamless = 'seamless' frameborder = 'no' scrolling = 'no'></iframe>
